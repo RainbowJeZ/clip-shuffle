@@ -29,6 +29,7 @@ The playlist must be **Public** or **Unlisted**. Private playlists can't be read
 | `fade` | Crossfade length in milliseconds (0 = hard cut) | 700 |
 | `titles` | `0` hides the title shown at the start of each clip | 1 |
 | `zoom` | Zooms the video in to push YouTube's own title bar off screen (`1` = no zoom) | 1.2 |
+| `res` | Caps video quality, e.g. `720` or `480`, for smoother playback on slow devices. `0` = automatic | 0 |
 
 ### Controls
 
@@ -51,6 +52,7 @@ Copy `presets/example.json`, give it a name such as `presets/halloween.json`, an
   "skipSeconds": 8,
   "showTitles": true,
   "zoom": 1.2,
+  "resolution": 0,
   "randomClips": true,
   "scenes": [
     { "video": "https://www.youtube.com/watch?v=...", "start": "1:05", "end": "1:30", "label": "Optional caption" }
@@ -86,4 +88,4 @@ Then open http://localhost:8000.
 chromium-browser --kiosk --noerrdialogs --disable-infobars --autoplay-policy=no-user-gesture-required "https://<your-username>.github.io/clip-shuffle/?preset=halloween"
 ```
 
-On newer Raspberry Pi OS the command may be `chromium` rather than `chromium-browser`. To start it automatically when the Pi boots, add that line (ending with `&`) to `~/.config/labwc/autostart`. On a Pi 4, if playback stutters, set the TV output to 1080p rather than 4K.
+On newer Raspberry Pi OS the command may be `chromium` rather than `chromium-browser`. To start it automatically when the Pi boots, add that line (ending with `&`) to `~/.config/labwc/autostart`. On a Pi 4, if playback stutters: add `&res=720` (or `480`) and `&fade=0` to the address, set the TV output to 1080p rather than 4K, and consider the *enhanced-h264ify* Chromium extension, which makes YouTube send video the Pi can decode in hardware.
