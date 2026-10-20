@@ -16,6 +16,7 @@
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: var(--font); }
   body.playing { cursor: none; overflow: hidden; }
   body.playing.pointer { cursor: default; }
@@ -363,8 +364,11 @@
     noCaptions(active);
     setTimeout(() => noCaptions(r.p), 1500);
     setTimeout(() => noCaptions(r.p), 4000);
-    screenOf(active).classList.add('on');
-    screenOf(prev).classList.remove('on');
+    // fade the new clip in on top; the old one stays fully visible underneath until the fade is done
+    const inEl = screenOf(active), outEl = screenOf(prev);
+    inEl.style.zIndex = 2; outEl.style.zIndex = 1;
+    inEl.classList.add('on');
+    setTimeout(() => outEl.classList.remove('on'), cfg.fade + 50);
     current = r;
     stats.shown++;
     caption(r);
