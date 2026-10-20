@@ -25,7 +25,9 @@
   .screen { position: fixed; inset: 0; opacity: 0; transition: opacity var(--fade, 700ms) ease; pointer-events: none; }
   body:not(.playing) .screen { display: none; }
   .screen.on { opacity: 1; }
-  .screen iframe { width: 100%; height: 100%; border: 0; pointer-events: none; }
+  /* Zooming in slightly pushes YouTube's title bar off the top of the screen */
+  .screen { overflow: hidden; }
+  .screen iframe { width: 100%; height: 100%; border: 0; pointer-events: none; transform: scale(var(--zoom, 1.2)); transform-origin: center; }
   #loaderBox { position: fixed; width: 2px; height: 2px; left: -10px; top: -10px; overflow: hidden; }
 
   #caption {
@@ -54,7 +56,7 @@
   form { display: grid; gap: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
   label { display: grid; gap: 6px; font-size: 14px; font-weight: 600; }
   label small { color: var(--muted); font-weight: 400; }
-  input[type=text], input[type=number] {
+  input[type=text], input[type=number], select {
     font: inherit; font-weight: 400; color: var(--fg); background: #000; border: 1px solid var(--line);
     border-radius: 6px; padding: 10px 12px; width: 100%;
   }
@@ -96,6 +98,15 @@
         <input id="trimInput" type="number" min="0" max="120" value="8">
       </label>
     </div>
+    <label for="zoomInput">Hide YouTube's title bar
+      <small>Zooms the video in slightly so YouTube's own title at the top is pushed off screen. Crops a thin strip from each edge.</small>
+      <select id="zoomInput">
+        <option value="1">Off (show the full picture)</option>
+        <option value="1.1">Light zoom</option>
+        <option value="1.2" selected>Standard zoom (recommended)</option>
+        <option value="1.3">Strong zoom</option>
+      </select>
+    </label>
     <label class="check" for="titlesInput"><input id="titlesInput" type="checkbox" checked> Show the video's title at the start of each clip</label>
     <button type="submit">Start</button>
   </form>
@@ -114,7 +125,7 @@
 
   // ---------- settings ----------
   const cfg = { name: '', list: null, videos: [], scenes: [], randomClips: true,
-                clip: 25, trim: 8, fade: 700, titles: true };
+                clip: 25, trim: 8, fade: 700, titles: true, zoom: 1.2 };
 
   const parsePlaylistId = v => {
     if (!v) return null;
@@ -156,6 +167,7 @@
     cfg.trim = num(p.skipSeconds, cfg.trim, 0, 120);
     cfg.fade = num(p.fadeMs, cfg.fade, 0, 3000);
     cfg.titles = bool(p.showTitles, cfg.titles);
+    cfg.zoom = num(p.zoom, cfg.zoom, 1, 2);
   }
 
   async function loadConfig() {
@@ -174,7 +186,9 @@
     cfg.trim = num(qs.get('skip'), cfg.trim, 0, 120);
     cfg.fade = num(qs.get('fade'), cfg.fade, 0, 3000);
     cfg.titles = bool(qs.get('titles'), cfg.titles);
+    cfg.zoom = num(qs.get('zoom'), cfg.zoom, 1, 2);
     document.documentElement.style.setProperty('--fade', cfg.fade + 'ms');
+    document.documentElement.style.setProperty('--zoom', cfg.zoom);
   }
 
   // ---------- messages, captions, info panel ----------
@@ -440,6 +454,7 @@
       if (!list) { message("That doesn't look like a playlist link. Copy it from the playlist's Share button.<br><a href=\"./\">Try again</a>"); return; }
       const p = new URLSearchParams({ list, clip: $('#clipInput').value || 25, skip: $('#trimInput').value || 8 });
       if (!$('#titlesInput').checked) p.set('titles', '0');
+      p.set('zoom', $('#zoomInput').value);
       location.search = p.toString();
     });
   }

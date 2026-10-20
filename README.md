@@ -28,6 +28,7 @@ The playlist must be **Public** or **Unlisted**. Private playlists can't be read
 | `skip` | Seconds to avoid at the start and end of each video | 8 |
 | `fade` | Crossfade length in milliseconds (0 = hard cut) | 700 |
 | `titles` | `0` hides the title shown at the start of each clip | 1 |
+| `zoom` | Zooms the video in to push YouTube's own title bar off screen (`1` = no zoom) | 1.2 |
 
 ### Controls
 
@@ -49,6 +50,7 @@ Copy `presets/example.json`, give it a name such as `presets/halloween.json`, an
   "clipSeconds": 25,
   "skipSeconds": 8,
   "showTitles": true,
+  "zoom": 1.2,
   "randomClips": true,
   "scenes": [
     { "video": "https://www.youtube.com/watch?v=...", "start": "1:05", "end": "1:30", "label": "Optional caption" }
