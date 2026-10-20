@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClipShuffle</title>
+<style>
+  :root {
+    --bg: #000;
+    --panel: #121216;
+    --line: #2a2a33;
+    --fg: #f2f2f5;
+    --muted: #9a9aa8;
+    --accent: #ffd23f;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: var(--font); }
+  body.playing { cursor: none; overflow: hidden; }
+  body.playing.pointer { cursor: default; }
+
+  /* Two stacked players: one plays while the other gets the next clip ready */
+  .screen { position: fixed; inset: 0; opacity: 0; transition: opacity var(--fade, 700ms) ease; }
+  .screen.on { opacity: 1; }
+  .screen iframe { width: 100%; height: 100%; border: 0; pointer-events: none; }
+  #loaderBox { position: fixed; width: 2px; height: 2px; left: -10px; top: -10px; overflow: hidden; }
+
+  #caption {
+    position: fixed; left: 4vw; bottom: 5vh; max-width: 70vw;
+    font-size: clamp(16px, 2.2vw, 34px); font-weight: 700; letter-spacing: .02em;
+    text-shadow: 0 2px 12px rgba(0,0,0,.9), 0 0 2px #000;
+    opacity: 0; transition: opacity .8s ease; pointer-events: none;
+  }
+  #caption.on { opacity: 1; }
+
+  #hud, #msg {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    background: rgba(18,18,22,.92); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 18px; font-size: 15px; line-height: 1.5; max-width: min(92vw, 640px);
+  }
+  #hud { top: 4vh; font-family: var(--mono); font-size: 13px; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #msg { top: 50%; transform: translate(-50%, -50%); text-align: center; }
+  #msg a { color: var(--accent); }
+
+  /* Setup screen */
+  #setup { max-width: 560px; margin: 0 auto; padding: 48px 16px; display: grid; gap: 20px; }
+  #setup h1 { margin: 0; font-size: 32px; letter-spacing: -.01em; }
+  #setup h1 span { color: var(--accent); }
+  #setup p { margin: 0; color: var(--muted); line-height: 1.55; }
+  form { display: grid; gap: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+  label { display: grid; gap: 6px; font-size: 14px; font-weight: 600; }
+  label small { color: var(--muted); font-weight: 400; }
+  input[type=text], input[type=number] {
+    font: inherit; font-weight: 400; color: var(--fg); background: #000; border: 1px solid var(--line);
+    border-radius: 6px; padding: 10px 12px; width: 100%;
+  }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row > label { flex: 1 1 140px; }
+  .check { display: flex; align-items: center; gap: 10px; font-weight: 400; }
+  button {
+    font: inherit; font-weight: 700; color: #000; background: var(--accent); border: 0;
+    border-radius: 6px; padding: 12px 16px; cursor: pointer;
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .keys { font-family: var(--mono); font-size: 13px; color: var(--muted); line-height: 1.8; }
+  .keys kbd { color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; }
+  @media (prefers-reduced-motion: reduce) { .screen, #caption { transition: none; } }
+</style>
+</head>
+<body>
+
+<div class="screen" id="screenA"><div id="playerA"></div></div>
+<div class="screen" id="screenB"><div id="playerB"></div></div>
+<div id="caption"></div>
+<div id="hud" hidden></div>
+<div id="msg" hidden></div>
+<div id="loaderBox"><div id="loader"></div></div>
+
+<main id="setup" hidden>
+  <h1>Clip<span>Shuffle</span></h1>
+  <p>Plays short random moments from a YouTube playlist, cutting between videos all night. Good for a TV in the background at a party.</p>
+  <form id="setupForm">
+    <label for="listInput">YouTube playlist link
+      <small>The playlist must be Public or Unlisted. Private playlists can't be read.</small>
+      <input id="listInput" type="text" placeholder="https://www.youtube.com/playlist?list=..." required>
+    </label>
+    <div class="row">
+      <label for="clipInput">Seconds per clip
+        <input id="clipInput" type="number" min="5" max="300" value="25">
+      </label>
+      <label for="trimInput">Skip at start/end of each video
+        <input id="trimInput" type="number" min="0" max="120" value="8">
+      </label>
+    </div>
+    <label class="check" for="titlesInput"><input id="titlesInput" type="checkbox" checked> Show the video's title at the start of each clip</label>
+    <button type="submit">Start</button>
+  </form>
+  <p>Starting opens an address you can bookmark, so next time it plays straight away.</p>
+  <div class="keys">
+    <kbd>Tap</kbd> or <kbd>F</kbd> full screen &nbsp; <kbd>→</kbd> or <kbd>N</kbd> next clip &nbsp; <kbd>Space</kbd> pause &nbsp; <kbd>H</kbd> info
+  </div>
+</main>
+
+<script>
+(() => {
+  'use strict';
+  const $ = s => document.querySelector(s);
+  const qs = new URLSearchParams(location.search);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  // ---------- settings ----------
+  const cfg = { name: '', list: null, videos: [], scenes: [], randomClips: true,
+                clip: 25, trim: 8, fade: 700, titles: true };
+
+  const parsePlaylistId = v => {
+    if (!v) return null;
+    v = String(v).trim();
+    const m = v.match(/[?&]list=([A-Za-z0-9_-]+)/);
+    if (m) return m[1];
+    return /^[A-Za-z0-9_-]{10,}$/.test(v) ? v : null;
+  };
+  const parseVideoId = v => {
+    if (!v) return null;
+    v = String(v).trim();
+    const m = v.match(/(?:[?&]v=|youtu\.be\/|\/embed\/|\/shorts\/)([A-Za-z0-9_-]{11})/);
+    if (m) return m[1];
+    return /^[A-Za-z0-9_-]{11}$/.test(v) ? v : null;
+  };
+  // "1:05" -> 65, "1:02:03" -> 3723, 90 -> 90
+  const toSec = t => {
+    if (t == null || t === '') return null;
+    if (typeof t === 'number') return t;
+    const parts = String(t).trim().split(':').map(Number);
+    if (parts.some(n => !Number.isFinite(n))) return null;
+    return parts.reduce((a, b) => a * 60 + b, 0);
+  };
+  const num = (v, d, lo, hi) => { const n = Number(v); return v != null && v !== '' && Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
+  const bool = (v, d) => v == null ? d : !/^(0|false|no|off)$/i.test(String(v));
+
+  function applyPreset(p) {
+    cfg.name = p.name || '';
+    if (p.playlist) cfg.list = parsePlaylistId(p.playlist);
+    if (Array.isArray(p.videos)) cfg.videos = p.videos.map(parseVideoId).filter(Boolean);
+    if (Array.isArray(p.scenes)) {
+      cfg.scenes = p.scenes.map(s => {
+        const start = toSec(s.start), end = toSec(s.end);
+        return { id: parseVideoId(s.video), start, end: end != null && end > start ? end : null, label: s.label || '' };
+      }).filter(s => s.id && s.start != null);
+    }
+    cfg.randomClips = bool(p.randomClips, true);
+    cfg.clip = num(p.clipSeconds, cfg.clip, 5, 300);
+    cfg.trim = num(p.skipSeconds, cfg.trim, 0, 120);
+    cfg.fade = num(p.fadeMs, cfg.fade, 0, 3000);
+    cfg.titles = bool(p.showTitles, cfg.titles);
+  }
+
+  async function loadConfig() {
+    const preset = qs.get('preset');
+    if (preset) {
+      if (!/^[\w-]+$/.test(preset)) throw new Error('A preset name can only use letters, numbers, - and _.');
+      const r = await fetch('presets/' + preset + '.json', { cache: 'no-store' });
+      if (!r.ok) throw new Error(`There's no preset called "${preset}". Check the file presets/${preset}.json exists.`);
+      let p;
+      try { p = await r.json(); } catch { throw new Error(`presets/${preset}.json isn't valid JSON. Check for a missing comma or quote.`); }
+      applyPreset(p);
+    }
+    if (qs.has('list')) cfg.list = parsePlaylistId(qs.get('list'));
+    if (qs.has('v')) cfg.videos = qs.get('v').split(',').map(parseVideoId).filter(Boolean);
+    cfg.clip = num(qs.get('clip'), cfg.clip, 5, 300);
+    cfg.trim = num(qs.get('skip'), cfg.trim, 0, 120);
+    cfg.fade = num(qs.get('fade'), cfg.fade, 0, 3000);
+    cfg.titles = bool(qs.get('titles'), cfg.titles);
+    document.documentElement.style.setProperty('--fade', cfg.fade + 'ms');
+  }
+
+  // ---------- messages, captions, info panel ----------
+  function message(html) { const m = $('#msg'); m.innerHTML = html; m.hidden = !html; }
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // "Blade Runner (1982) Official Trailer - Ridley Scott..." -> "Blade Runner (1982)"
+  function cleanTitle(t) {
+    if (!t) return '';
+    let s = t.split(/\s+[-|•–—]\s+/)[0];
+    s = s.replace(/\((\d{4})[^)]*\)/g, '($1)');
+    s = s.replace(/\[[^\]]*\]/g, '');
+    s = s.replace(/\b(official|theatrical|original|teaser|trailer|remastered|hd|4k|uhd|1080p|movie|video|intro|opening|credits)\b/gi, '');
+    s = s.replace(/#\d+|®|™/g, '').replace(/\(\s*\)/g, '').replace(/^[\s:,-]+|[\s:,-]+$/g, '').replace(/\s{2,}/g, ' ');
+    return s.trim();
+  }
+
+  let captionTimer;
+  function caption(r) {
+    if (!cfg.titles) return;
+    const text = r.label || cleanTitle(r.title);
+    if (!text) return;
+    const c = $('#caption');
+    c.textContent = text;
+    c.classList.add('on');
+    clearTimeout(captionTimer);
+    captionTimer = setTimeout(() => c.classList.remove('on'), 5000);
+  }
+
+  const stats = { shown: 0, skipped: 0 };
+  let current = null;
+  function renderHud() {
+    const h = $('#hud');
+    if (h.hidden) return;
+    const playable = pool.filter(c => !bad.has(c.id)).length;
+    h.innerHTML =
+      `<b>${esc(cfg.name || 'ClipShuffle')}</b><br>` +
+      `Now: ${esc(current ? (current.label || cleanTitle(current.title) || current.id) : '…')}<br>` +
+      `Clips in rotation: ${playable} · shown: ${stats.shown} · skipped: ${stats.skipped}<br>` +
+      `Clip length: ${cfg.clip}s<br>` +
+      `Tap/F full screen · →/N next · Space pause · H hide`;
+  }
+  function toggleHud(force) { const h = $('#hud'); h.hidden = force != null ? !force : !h.hidden; renderHud(); }
+
+  // ---------- YouTube ----------
+  function loadYT() {
+    return new Promise((resolve, reject) => {
+      if (window.YT && YT.Player) return resolve();
+      const t = setTimeout(() => reject(new Error("YouTube didn't load. Check the internet connection, then reload.")), 20000);
+      window.onYouTubeIframeAPIReady = () => { clearTimeout(t); resolve(); };
+      const s = document.createElement('script');
+      s.src = 'https://www.youtube.com/iframe_api';
+      s.onerror = () => { clearTimeout(t); reject(new Error("YouTube didn't load. Check the internet connection, then reload.")); };
+      document.head.append(s);
+    });
+  }
+
+  const baseVars = { autoplay: 0, controls: 0, disablekb: 1, fs: 0, iv_load_policy: 3, modestbranding: 1,
+                     playsinline: 1, rel: 0, mute: 1, origin: location.origin };
+
+  function makePlayer(elId, extraVars = {}) {
+    return new Promise(resolve => {
+      const p = new YT.Player(elId, {
+        width: '100%', height: '100%',
+        playerVars: { ...baseVars, ...extraVars },
+        events: {
+          onReady: () => resolve(p),
+          onStateChange: e => p._onState && p._onState(e.data),
+          onError: e => p._onError && p._onError(e.data)
+        }
+      });
+    });
+  }
+
+  async function fetchPlaylist(list) {
+    const p = await makePlayer('loader', { listType: 'playlist', list });
+    const read = async tries => {
+      for (let i = 0; i < tries; i++) {
+        const ids = p.getPlaylist && p.getPlaylist();
+        if (ids && ids.length) return ids;
+        await sleep(250);
+      }
+      return null;
+    };
+    let ids = await read(24);
+    if (!ids) { p.cuePlaylist({ listType: 'playlist', list }); ids = await read(40); }
+    try { p.destroy(); } catch {}
+    if (!ids) throw new Error("Couldn't read that playlist. Make sure it's set to <b>Public</b> or <b>Unlisted</b> in YouTube, not Private.");
+    return ids;
+  }
+
+  // ---------- the clip rotation ----------
+  let pool = [];             // every possible clip: {id} for a random moment, or {id, start, end, label} for a chosen scene
+  const bad = new Set();     // videos that refuse to play outside YouTube
+  let bag = [], lastId = null;
+
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+  // Plays everything once in a random order before repeating, and never the same video twice in a row
+  function nextClip() {
+    if (!bag.length) {
+      bag = shuffle(pool.filter(c => !bad.has(c.id)));
+      if (!bag.length) return null;
+      if (bag.length > 1 && bag[bag.length - 1].id === lastId) [bag[0], bag[bag.length - 1]] = [bag[bag.length - 1], bag[0]];
+    }
+    let c = bag.pop();
+    while (c && bad.has(c.id)) c = bag.pop();
+    if (!c) return nextClip();
+    lastId = c.id;
+    return c;
+  }
+
+  // Load a clip into a hidden player and leave it paused at its starting point
+  function prepare(p, clip) {
+    return new Promise((resolve, reject) => {
+      let done = false, started = false;
+      const finish = (fn, v) => {
+        if (done) return;
+        done = true; clearTimeout(timeout); p._onState = null; p._onError = null; fn(v);
+      };
+      const timeout = setTimeout(() => finish(reject, { kind: 'timeout' }), 15000);
+      p._onError = code => finish(reject, { kind: 'error', code });
+      p._onState = st => {
+        if (st !== YT.PlayerState.PLAYING || started) return;
+        started = true;
+        p.pauseVideo();
+        const dur = p.getDuration() || 0;
+        let start, end;
+        if (clip.start != null) {
+          start = clip.start;
+          end = clip.end != null ? clip.end : start + cfg.clip;
+        } else {
+          const lo = cfg.trim, hi = dur - cfg.trim - cfg.clip;
+          start = hi > lo ? lo + Math.random() * (hi - lo) : Math.max(0, (dur - cfg.clip) / 2);
+          start = Math.floor(start);
+          end = start + cfg.clip;
+          p.seekTo(start, true);
+        }
+        if (dur > 0) end = Math.min(end, dur - 0.5);
+        if (end - start < 2) return finish(reject, { kind: 'short' });
+        const title = (p.getVideoData && p.getVideoData().title) || '';
+        setTimeout(() => finish(resolve, { p, id: clip.id, start, end, title, label: clip.label || '' }), 800);
+      };
+      try {
+        p.mute();
+        p.loadVideoById({ videoId: clip.id, startSeconds: clip.start != null ? clip.start : 0 });
+      } catch { finish(reject, { kind: 'error' }); }
+    });
+  }
+
+  async function getReady(p) {
+    const attempts = pool.length + 3;
+    for (let i = 0; i < attempts; i++) {
+      const clip = nextClip();
+      if (!clip) break;
+      try { return await prepare(p, clip); }
+      catch (e) {
+        stats.skipped++;
+        if (e.kind === 'error') bad.add(clip.id);
+      }
+    }
+    throw new Error('nothing playable');
+  }
+
+  let A, B, active, standby, pending = null, timer = null, busy = false, paused = false;
+  const screenOf = p => (p === A ? $('#screenA') : $('#screenB'));
+
+  function show(r) {
+    const prev = active;
+    prev._onState = null; prev._onError = null;
+    active = r.p;
+    standby = prev;
+    active._onState = st => { if (st === YT.PlayerState.ENDED) advance(); };
+    active._onError = () => advance();
+    active.playVideo();
+    screenOf(active).classList.add('on');
+    screenOf(prev).classList.remove('on');
+    current = r;
+    stats.shown++;
+    caption(r);
+    renderHud();
+    timer = setTimeout(advance, Math.max(2, r.end - r.start) * 1000);
+    // wait for the old clip to fade out before loading the next one into its player
+    pending = sleep(cfg.fade + 150).then(() => { try { prev.pauseVideo(); } catch {} return getReady(prev); });
+    pending.catch(() => {});
+  }
+
+  async function advance() {
+    if (busy) return;
+    busy = true;
+    clearTimeout(timer);
+    paused = false;
+    try { show(await pending); message(''); }
+    catch {
+      message("None of these videos can be played outside YouTube. Try a different playlist.<br><a href=\"./\">Back to setup</a>");
+    }
+    busy = false;
+  }
+
+  function togglePause() {
+    if (!active || busy || !current) return;
+    if (!paused) {
+      paused = true; clearTimeout(timer); active.pauseVideo(); message('Paused. Press Space to carry on.');
+    } else {
+      paused = false; message('');
+      active.playVideo();
+      const now = active.getCurrentTime ? active.getCurrentTime() : current.start;
+      timer = setTimeout(advance, Math.max(1, current.end - now) * 1000);
+    }
+  }
+
+  // ---------- screen behaviour ----------
+  function fullscreen() {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  }
+  let wakeLock = null;
+  async function keepAwake() {
+    try { if ('wakeLock' in navigator && document.visibilityState === 'visible') wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+  }
+  document.addEventListener('visibilitychange', keepAwake);
+
+  let pointerTimer;
+  function bindPlayingControls() {
+    document.addEventListener('keydown', e => {
+      if (e.key === 'ArrowRight' || e.key === 'n' || e.key === 'N') advance();
+      else if (e.key === ' ') { e.preventDefault(); togglePause(); }
+      else if (e.key === 'h' || e.key === 'H' || e.key === 'i' || e.key === 'I') toggleHud();
+      else if (e.key === 'f' || e.key === 'F') fullscreen();
+    });
+    document.addEventListener('click', fullscreen);
+    document.addEventListener('mousemove', () => {
+      document.body.classList.add('pointer');
+      clearTimeout(pointerTimer);
+      pointerTimer = setTimeout(() => document.body.classList.remove('pointer'), 2500);
+    });
+  }
+
+  // ---------- setup screen ----------
+  function showSetup() {
+    $('#setup').hidden = false;
+    $('#setupForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const list = parsePlaylistId($('#listInput').value);
+      if (!list) { message("That doesn't look like a playlist link. Copy it from the playlist's Share button.<br><a href=\"./\">Try again</a>"); return; }
+      const p = new URLSearchParams({ list, clip: $('#clipInput').value || 25, skip: $('#trimInput').value || 8 });
+      if (!$('#titlesInput').checked) p.set('titles', '0');
+      location.search = p.toString();
+    });
+  }
+
+  // ---------- start ----------
+  async function start() {
+    try { await loadConfig(); }
+    catch (e) { message(esc(e.message) + '<br><a href="./">Back to setup</a>'); return; }
+
+    if (!cfg.list && !cfg.videos.length && !cfg.scenes.length) { showSetup(); return; }
+
+    document.body.classList.add('playing');
+    message('Loading…');
+    try {
+      await loadYT();
+      let ids = cfg.videos.slice();
+      if (cfg.list) ids = ids.concat(await fetchPlaylist(cfg.list));
+      ids = [...new Set(ids)];
+      pool = (cfg.randomClips ? ids.map(id => ({ id })) : []).concat(cfg.scenes);
+      if (!pool.length) throw new Error('There are no videos to play. Add a playlist or some videos.');
+
+      A = await makePlayer('playerA');
+      B = await makePlayer('playerB');
+      active = B; standby = A;
+      pending = getReady(A);
+      pending.catch(() => {});
+      bindPlayingControls();
+      keepAwake();
+      await advance();
+      toggleHud(true);
+      setTimeout(() => toggleHud(false), 7000);
+    } catch (e) {
+      message(e.message + '<br><a href="./">Back to setup</a>');
+    }
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "Example preset",
+  "playlist": "https://www.youtube.com/playlist?list=PASTE_YOUR_PLAYLIST_ID_HERE",
+  "clipSeconds": 25,
+  "skipSeconds": 8,
+  "showTitles": true,
+  "randomClips": true,
+  "scenes": [
+    { "video": "https://www.youtube.com/watch?v=VIDEO_ID_HERE", "start": "0:45", "end": "1:10", "label": "A scene you always want included" }
+  ]
+}
