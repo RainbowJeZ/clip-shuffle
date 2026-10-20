@@ -232,7 +232,14 @@
   }
 
   const baseVars = { autoplay: 0, controls: 0, disablekb: 1, fs: 0, iv_load_policy: 3, modestbranding: 1,
-                     playsinline: 1, rel: 0, mute: 1, origin: location.origin };
+                     playsinline: 1, rel: 0, mute: 1, cc_load_policy: 0, origin: location.origin };
+
+  // Muted embeds often switch YouTube's subtitles on, so turn them off on every clip
+  function noCaptions(p) {
+    try { p.setOption('captions', 'track', {}); } catch {}
+    try { p.unloadModule('captions'); } catch {}
+    try { p.unloadModule('cc'); } catch {}
+  }
 
   function makePlayer(elId, extraVars = {}) {
     return new Promise(resolve => {
@@ -300,6 +307,7 @@
         if (st !== YT.PlayerState.PLAYING || started) return;
         started = true;
         p.pauseVideo();
+        noCaptions(p);
         const dur = p.getDuration() || 0;
         let start, end;
         if (clip.start != null) {
@@ -346,9 +354,15 @@
     prev._onState = null; prev._onError = null;
     active = r.p;
     standby = prev;
-    active._onState = st => { if (st === YT.PlayerState.ENDED) advance(); };
+    active._onState = st => {
+      if (st === YT.PlayerState.ENDED) advance();
+      else if (st === YT.PlayerState.PLAYING) noCaptions(r.p);
+    };
     active._onError = () => advance();
     active.playVideo();
+    noCaptions(active);
+    setTimeout(() => noCaptions(r.p), 1500);
+    setTimeout(() => noCaptions(r.p), 4000);
     screenOf(active).classList.add('on');
     screenOf(prev).classList.remove('on');
     current = r;
