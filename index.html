@@ -21,7 +21,8 @@
   body.playing.pointer { cursor: default; }
 
   /* Two stacked players: one plays while the other gets the next clip ready */
-  .screen { position: fixed; inset: 0; opacity: 0; transition: opacity var(--fade, 700ms) ease; }
+  .screen { position: fixed; inset: 0; opacity: 0; transition: opacity var(--fade, 700ms) ease; pointer-events: none; }
+  body:not(.playing) .screen { display: none; }
   .screen.on { opacity: 1; }
   .screen iframe { width: 100%; height: 100%; border: 0; pointer-events: none; }
   #loaderBox { position: fixed; width: 2px; height: 2px; left: -10px; top: -10px; overflow: hidden; }
